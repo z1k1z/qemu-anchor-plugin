@@ -1,0 +1,4 @@
+*.so
+*.o
+/dumps/
+*.jsonl
