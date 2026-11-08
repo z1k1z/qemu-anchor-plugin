@@ -280,6 +280,8 @@ static uint64_t calc_xxh64(const uint8_t data[], size_t len, uint64_t seed)
 static void append_json_escaped(GString *str, const char *s)
 {
     if (!s) return;
+    g_autofree char *fixed = g_utf8_validate(s, -1, NULL) ? NULL : g_utf8_make_valid(s, -1);
+    if (fixed) s = fixed;
     for (size_t i = 0; s[i] != '\0'; i++) {
         unsigned char c = (unsigned char)s[i];
         if (c == '"' || c == '\\') {
@@ -291,7 +293,9 @@ static void append_json_escaped(GString *str, const char *s)
             g_string_append(str, "\\r");
         } else if (c == '\t') {
             g_string_append(str, "\\t");
-        } else if (c >= 0x20 && c < 0x7f) {
+        } else if (c < 0x20 || c == 0x7f) {
+            g_string_append_printf(str, "\\u%04x", c);
+        } else {
             g_string_append_c(str, (char)c);
         }
     }
@@ -498,7 +502,7 @@ static void notify_external_orchestrator(const char *json_str)
     }
 
     if (!ok && g_atomic_int_compare_and_exchange(&sock_err_logged, 0, 1)) {
-        fprintf(stderr, "[anchor] WARNING: failed to notify orchestrator socket %s (logged once)\n",
+        fprintf(stderr, "[anchor] warn: orchestrator socket %s unreachable\n",
                 notify_sock_path);
     }
 
@@ -526,7 +530,7 @@ static bool parse_sig_hex(
             mask[i] = 0x00;
         } else if (c1 == '?' || c2 == '?') {
             fprintf(stderr,
-                    "[anchor] wildcard masks in sig=%s must be specified as byte pairs '??'\n",
+                    "[anchor] wildcard masks in sig=%s must be specified as byte pairs '?" "?'\n",
                     hex);
             return false;
         } else if (isxdigit((unsigned char)c1) && isxdigit((unsigned char)c2)) {
@@ -2480,8 +2484,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(
             ac->use_sig = true;
             if (ac->sig_len > 15) {
                 fprintf(stderr,
-                        "[anchor] WARNING: Anchor #%d sig length (%zuB) > 15B (single x86 insn); "
-                        "will only match if contained within a single TB\n",
+                        "[anchor] warn: anchor #%d sig is %zuB (>15B), matches only inside one TB\n",
                         ac->id, ac->sig_len);
             }
         } else if (g_strcmp0(key, "va") == 0) {
@@ -2572,7 +2575,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(
             }
             if (ac->exit_on_hit) {
                 fprintf(stderr,
-                        "[anchor] WARNING: exit=1 will truncate drcov/cflow/uftrace output; use pause=1\n");
+                        "[anchor] warn: exit=1 cuts drcov/cflow/uftrace output, try pause=1\n");
             }
         } else {
             fprintf(stderr, "[anchor] Unknown parameter: %s\n", opt);
@@ -2613,8 +2616,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(
             }
             if (warn_mix) {
                 fprintf(stderr,
-                        "[anchor] WARNING: Anchor #%d dumpva='%s' mixes bitwise (&,|,^) and additive (+,-) "
-                        "operators without parentheses; note that +,- bind tighter than &,|,^\n",
+                        "[anchor] warn: anchor #%d dumpva='%s': +/- bind tighter than &|^, add parens\n",
                         a, ac->dumpva_expr);
             }
         }
@@ -2630,8 +2632,7 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(
             }
             if (warn_mix) {
                 fprintf(stderr,
-                        "[anchor] WARNING: Anchor #%d dumplen='%s' mixes bitwise (&,|,^) and additive (+,-) "
-                        "operators without parentheses; note that +,- bind tighter than &,|,^\n",
+                        "[anchor] warn: anchor #%d dumplen='%s': +/- bind tighter than &|^, add parens\n",
                         a, ac->dumplen_expr);
             }
         }
@@ -2647,14 +2648,12 @@ QEMU_PLUGIN_EXPORT int qemu_plugin_install(
             }
             if (warn_neg) {
                 fprintf(stderr,
-                        "[anchor] WARNING: Anchor #%d cond='%s' compares against a negative literal; "
-                        "all comparisons are unsigned uint64_t (-1 is 0xffffffffffffffff)\n",
+                        "[anchor] warn: anchor #%d cond='%s': negative literal, compare is unsigned u64\n",
                         a, ac->cond_expr);
             }
             if (warn_mix) {
                 fprintf(stderr,
-                        "[anchor] WARNING: Anchor #%d cond='%s' mixes bitwise (&,|,^) and additive (+,-) "
-                        "operators without parentheses; note that +,- bind tighter than &,|,^\n",
+                        "[anchor] warn: anchor #%d cond='%s': +/- bind tighter than &|^, add parens\n",
                         a, ac->cond_expr);
             }
         }
